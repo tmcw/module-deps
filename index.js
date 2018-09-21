@@ -6,7 +6,6 @@ var nodeResolve = require('resolve');
 var detective = require('detective');
 var through = require('through2');
 var concat = require('concat-stream');
-var parents = require('parents');
 var combine = require('stream-combiner2');
 var duplexer = require('duplexer2');
 var xtend = require('xtend');
@@ -17,6 +16,53 @@ var Transform = require('readable-stream').Transform;
 
 module.exports = Deps;
 inherits(Deps, Transform);
+
+function parents(cwd, opts) {
+    if (cwd === undefined) cwd = process.cwd();
+    if (!opts) opts = {};
+    var platform = opts.platform || process.platform;
+
+    var isWindows = /^win/.test(platform);
+    var p = isWindows ? path.win32 : path;
+    var normalize = !isWindows ? p.normalize :
+        p.normalize('c:') === 'c:.' ? fixNormalize(p.normalize) :
+        p.normalize;
+    var sep = isWindows ? /[\\\/]/ : '/';
+    var init = isWindows ? '' : '/';
+
+    var join = function (x, y) {
+        var ps = [ x, y ].filter(function (p) {
+            return p && typeof p === 'string'
+        });
+
+        return normalize(ps.join(isWindows ? '\\' : '/'));
+    };
+
+    var res = normalize(cwd)
+    .split(sep)
+    .reduce(function (acc,dir,ix) {
+        return acc.concat(join(acc[ix], dir))
+    }, [init])
+    .slice(1)
+    .reverse()
+    ;
+    if (res[0] === res[1]) return [ res[0] ];
+    if (isWindows && /^\\/.test(cwd)) {
+        return res.slice(0,-1).map(function (d) {
+            var ch = d.charAt(0)
+            return ch === '\\' ? d :
+                ch === '.' ? '\\' + d.slice(1) :
+                '\\' + d
+        });
+    }
+    return res;
+
+    function fixNormalize(fn) {
+        return function(p) {
+            return fn(p).replace(/:\.$/, ':')
+        }
+    }
+}
 
 function Deps (opts) {
     var self = this;
@@ -134,7 +180,7 @@ Deps.prototype._flush = function () {
     Object.keys(files).forEach(function (key) {
         var r = files[key];
         var pkg = r.pkg || {};
-        var dir = path.dirname(r.row.file);
+        var dir = path.dirname(r.row.file || '');
         if (!pkg.__dirname) pkg.__dirname = dir;
         self.walk(r.row, xtend(self.top, {
             filename: path.join(dir, '_fake.js')
@@ -464,7 +510,7 @@ Deps.prototype.lookupPackage = function (file, cb) {
     if (cached) return nextTick(cb, null, cached);
     if (cached === false) return nextTick(cb, null, undefined);
     
-    var dirs = parents(path.dirname(file));
+    var dirs = parents(path.dirname(file || ''));
     
     (function next () {
         if (dirs.length === 0) {

@@ -1,5 +1,6 @@
 var fs = require('fs');
 var path = require('path');
+var relativePath = require('cached-path-relative')
 
 var browserResolve = require('browser-resolve');
 var nodeResolve = require('resolve');
@@ -16,6 +17,18 @@ var Transform = require('readable-stream').Transform;
 
 module.exports = Deps;
 inherits(Deps, Transform);
+
+function leftPad(str, width) {
+    str = str.toString();
+    while (str.length < width) str = '0' + str;
+    return str;
+}
+
+function dirname(file) {
+    if (file !== undefined)  {
+        return path.dirname(file);
+    }
+}
 
 function parents(cwd, opts) {
     if (cwd === undefined) cwd = process.cwd();
@@ -56,13 +69,14 @@ function parents(cwd, opts) {
         });
     }
     return res;
+}
 
     function fixNormalize(fn) {
         return function(p) {
             return fn(p).replace(/:\.$/, ':')
         }
     }
-}
+
 
 function Deps (opts) {
     var self = this;
@@ -117,11 +131,11 @@ function Deps (opts) {
 
 Deps.prototype._isTopLevel = function (file) {
     var isTopLevel = this.entries.some(function (main) {
-        var m = path.relative(path.dirname(main), file);
+        var m = path.relative(dirname(main), file);
         return m.split(/[\\\/]/).indexOf('node_modules') < 0;
     });
     if (!isTopLevel) {
-        var m = path.relative(this.basedir, file);
+        var m = relativePath(this.basedir, file);
         isTopLevel = m.split(/[\\\/]/).indexOf('node_modules') < 0;
     }
     return isTopLevel;
@@ -180,10 +194,10 @@ Deps.prototype._flush = function () {
     Object.keys(files).forEach(function (key) {
         var r = files[key];
         var pkg = r.pkg || {};
-        var dir = path.dirname(r.row.file || '');
+        var dir = r.row.file ? path.dirname(r.row.file) : self.basedir;
         if (!pkg.__dirname) pkg.__dirname = dir;
         self.walk(r.row, xtend(self.top, {
-            filename: path.join(dir, '_fake.js')
+            filename: path.join(dir || '', '_fake.js')
         }));
     });
     if (this.pending === 0) this.push(null);
@@ -205,7 +219,7 @@ Deps.prototype.resolve = function (id, parent, cb) {
     }
     
     parent.packageFilter = function (p, x) {
-        var pkgdir = path.dirname(x);
+        var pkgdir = dirname(x);
         if (opts.packageFilter) p = opts.packageFilter(p, x);
         p.__dirname = pkgdir;
 
@@ -226,7 +240,7 @@ Deps.prototype.resolve = function (id, parent, cb) {
             self.lookupPackage(file, function (err, p) {
                 if (err) return cb(err);
                 if (!p) p = {};
-                if (!p.__dirname) p.__dirname = path.dirname(file);
+                if (!p.__dirname) p.__dirname = dirname(file);
                 self.pkgCache[file] = p;
                 onresolve(err, file, opts.packageFilter
                     ? opts.packageFilter(p, p.__dirname) : p,
@@ -298,7 +312,7 @@ Deps.prototype.getTransforms = function (file, pkg, opts) {
     function makeTransform (tr, cb) {
         var trOpts = {};
         if (Array.isArray(tr)) {
-            trOpts = tr[1];
+            trOpts = tr[1] || {};
             tr = tr[0];
         }
         if (typeof tr === 'function') {
@@ -315,7 +329,7 @@ Deps.prototype.getTransforms = function (file, pkg, opts) {
     }
     
     function loadTransform (id, trOpts, cb) {
-        var params = { basedir: path.dirname(file) };
+        var params = { basedir: dirname(file) };
         nodeResolve(id, params, function nr (err, res, again) {
             if (err && again) return cb && cb(err);
             
@@ -350,6 +364,7 @@ Deps.prototype.getTransforms = function (file, pkg, opts) {
 Deps.prototype.walk = function (id, parent, cb) {
     var self = this;
     var opts = self.options;
+    var sortKey = parent.sortKey || '';
     this.pending ++;
     
     var rec = {};
@@ -390,7 +405,7 @@ Deps.prototype.walk = function (id, parent, cb) {
             var ts = self.getTransforms(file, pkg);
             ts.pipe(concat(function (body) {
                 rec.source = body.toString('utf8');
-                fromSource(file, rec.source, pkg);
+                fromSource(file, rec.source, pkg, undefined, sortKey);
             }));
             return ts.end(rec.source);
         }
@@ -412,13 +427,13 @@ Deps.prototype.walk = function (id, parent, cb) {
             var ts = self.getTransforms(file, pkg);
             ts.pipe(concat(function (body) {
                 rec.source = body.toString('utf8');
-                fromSource(file, rec.source, pkg);
+                fromSource(file, rec.source, pkg, undefined, sortKey);
             }));
             return ts.end(rec.source);
         }
         
         var c = self.cache && self.cache[file];
-        if (c) return fromDeps(file, c.source, c.package, fakePath, Object.keys(c.deps));
+        if (c) return fromDeps(file, c.source, c.package, fakePath, Object.keys(c.deps), sortKey);
         
         self.readFile(file, id, pkg)
             .pipe(self.getTransforms(fakePath || file, pkg, {
@@ -426,17 +441,17 @@ Deps.prototype.walk = function (id, parent, cb) {
                 inNodeModules: parent.inNodeModules
             }))
             .pipe(concat(function (body) {
-                fromSource(file, body.toString('utf8'), pkg, fakePath);
+                fromSource(file, body.toString('utf8'), pkg, fakePath, sortKey);
             }))
         ;
     });
 
-    function fromSource (file, src, pkg, fakePath) {
+    function fromSource (file, src, pkg, fakePath, sortKey) {
         var deps = rec.noparse ? [] : self.parseDeps(file, src);
-        if (deps) fromDeps(file, src, pkg, fakePath, deps);
+        if (deps) fromDeps(file, src, pkg, fakePath, deps, sortKey);
     }
     
-    function fromDeps (file, src, pkg, fakePath, deps) {
+    function fromDeps (file, src, pkg, fakePath, deps, sortKey) {
         var p = deps.length;
         var resolved = {};
         
@@ -444,7 +459,7 @@ Deps.prototype.walk = function (id, parent, cb) {
         
         (function resolve () {
             if (self.inputPending > 0) return setTimeout(resolve);
-            deps.forEach(function (id) {
+            deps.forEach(function (id, i) {
                 if (opts.filter && !opts.filter(id)) {
                     resolved[id] = false;
                     if (--p === 0) done();
@@ -456,7 +471,8 @@ Deps.prototype.walk = function (id, parent, cb) {
                     filename: file,
                     paths: self.paths,
                     package: pkg,
-                    inNodeModules: parent.inNodeModules || !isTopLevel
+                    inNodeModules: parent.inNodeModules || !isTopLevel,
+                    sortKey: sortKey + '!' + file + ':' + leftPad(i, 8)
                 };
                 self.walk(id, current, function (err, r) {
                     resolved[id] = r;
@@ -471,6 +487,7 @@ Deps.prototype.walk = function (id, parent, cb) {
             if (!rec.source) rec.source = src;
             if (!rec.deps) rec.deps = resolved;
             if (!rec.file) rec.file = file;
+            rec.sortKey = sortKey + '!' + file;
             
             if (self.entries.indexOf(file) >= 0) {
                 rec.entry = true;
@@ -510,6 +527,7 @@ Deps.prototype.lookupPackage = function (file, cb) {
     if (cached) return nextTick(cb, null, cached);
     if (cached === false) return nextTick(cb, null, undefined);
     
+
     var dirs = parents(path.dirname(file || ''));
     
     (function next () {

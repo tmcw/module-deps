@@ -1,6 +1,6 @@
 {
   "name": "module-deps",
-  "version": "4.0.5",
+  "version": "5.0.0",
   "description": "walk the dependency graph to generate json output that can be fed into browser-pack",
   "main": "index.js",
   "bin": {
@@ -22,8 +22,8 @@
     "xtend": "^4.0.0"
   },
   "devDependencies": {
-    "tap": "^1.0.0",
-    "browser-pack": "^5.0.0"
+    "browser-pack": "^5.0.0",
+    "tap": "^1.0.0"
   },
   "scripts": {
     "test": "tap test/*.js"

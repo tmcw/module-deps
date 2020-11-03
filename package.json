@@ -33,9 +33,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/substack/module-deps.git"
+    "url": "git://github.com/tmcw/module-deps.git"
   },
-  "homepage": "https://github.com/substack/module-deps",
+  "homepage": "https://github.com/tmcw/module-deps",
   "keywords": [
     "dependency",
     "graph",

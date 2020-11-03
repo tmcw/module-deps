@@ -4,7 +4,7 @@ var relativePath = require('cached-path-relative')
 
 var browserResolve = require('browser-resolve');
 var nodeResolve = require('resolve');
-var detective = require('detective');
+var konan = require('konan');
 var through = require('through2');
 var concat = require('concat-stream');
 var combine = require('stream-combiner2');
@@ -509,7 +509,7 @@ Deps.prototype.parseDeps = function (file, src, cb) {
         return [];
     }
     
-    try { var deps = detective(src) }
+    try { var deps = konan(src).strings }
     catch (ex) {
         var message = ex && ex.message ? ex.message : ex;
         this.emit('error', new Error(
